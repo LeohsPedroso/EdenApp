@@ -1,0 +1,8 @@
+{
+  "appId": "com.edenmc.app",
+  "appName": "EdenMC",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}
