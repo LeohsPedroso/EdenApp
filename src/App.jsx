@@ -53,8 +53,6 @@ import {
 // muted   #8FA093
 // ---------------------------------------------------------------------------
 
-const PLAYERS_ONLINE = 214;
-
 // ---------------------------------------------------------------------------
 // Conexão com o backend real (ver edenmc-backend/server.js)
 // ---------------------------------------------------------------------------
@@ -158,7 +156,32 @@ function PhoneChrome({ children }) {
   );
 }
 
-function TopStatus({ nick, role, onOpenConfig, onOpenProfile }) {
+function TopStatus({ nick, role, onOpenConfig, onOpenProfile, authToken }) {
+  const [onlineCount, setOnlineCount] = useState(null);
+
+  useEffect(() => {
+    if (!authToken) return;
+    let cancelled = false;
+
+    const fetchCount = () => {
+      apiFetch("/app/players/online", { token: authToken })
+        .then((data) => {
+          if (!cancelled) setOnlineCount((data.players || []).length);
+        })
+        .catch(() => {
+          // silencioso -- mantem o ultimo valor conhecido em vez de piscar
+          // um erro toda vez que a rede oscila
+        });
+    };
+
+    fetchCount();
+    const interval = setInterval(fetchCount, 30000); // atualiza a cada 30s
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [authToken]);
+
   return (
     <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-[#2A3B2E]">
       <button onClick={onOpenProfile} className="text-left">
@@ -181,7 +204,7 @@ function TopStatus({ nick, role, onOpenConfig, onOpenProfile }) {
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#5FBE79] opacity-60" />
             <span className="relative inline-flex rounded-full h-2 w-2 bg-[#5FBE79]" />
           </span>
-          <span className="text-xs font-medium text-[#C9D3CB]">{PLAYERS_ONLINE} online</span>
+          <span className="text-xs font-medium text-[#C9D3CB]">{onlineCount === null ? "…" : onlineCount} online</span>
         </div>
         <button
           onClick={onOpenConfig}
@@ -241,8 +264,10 @@ function LinkScreen({ onLinked }) {
   const [resetMode, setResetMode] = useState(false);
   const [code, setCode] = useState("");
   const [nick, setNick] = useState("");
+  const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
   const [senha2, setSenha2] = useState("");
+  const [loginId, setLoginId] = useState(""); // nick OU email, no login
   const [loginSenha, setLoginSenha] = useState("");
   const [error, setError] = useState("");
   const [token, setToken] = useState("");
@@ -271,12 +296,16 @@ function LinkScreen({ onLinked }) {
       setError("As senhas não coincidem.");
       return;
     }
+    if (email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setError("E-mail inválido (ou deixe em branco).");
+      return;
+    }
     setError("");
     setSubmitting(true);
     try {
       const data = await apiFetch("/app/link/confirm", {
         method: "POST",
-        body: { code: digits, password: senha },
+        body: { code: digits, password: senha, email: email.trim() || undefined },
       });
       setNick(data.nick);
       setToken(data.token);
@@ -289,8 +318,8 @@ function LinkScreen({ onLinked }) {
   };
 
   const doLogin = async () => {
-    if (!nick.trim() || !loginSenha.trim()) {
-      setError("Preencha nick e senha.");
+    if (!loginId.trim() || !loginSenha.trim()) {
+      setError("Preencha nick/e-mail e senha.");
       return;
     }
     setError("");
@@ -298,7 +327,7 @@ function LinkScreen({ onLinked }) {
     try {
       const data = await apiFetch("/app/auth/login", {
         method: "POST",
-        body: { nick: nick.trim(), password: loginSenha },
+        body: { identifier: loginId.trim(), password: loginSenha },
       });
       onLinked(data.nick, data.token);
     } catch (err) {
@@ -314,13 +343,13 @@ function LinkScreen({ onLinked }) {
         <div>
           <h1 className="text-2xl font-bold text-[#E7E9E2] leading-tight">Entrar</h1>
           <p className="text-sm text-[#B7C1B8] mt-2 leading-relaxed">
-            Use o nick e a senha criados quando você vinculou a conta.
+            Use o nick ou e-mail e a senha criados quando você vinculou a conta.
           </p>
           <div className="mt-6 space-y-3">
             <input
-              value={nick}
-              onChange={(e) => setNick(e.target.value)}
-              placeholder="Nick"
+              value={loginId}
+              onChange={(e) => setLoginId(e.target.value)}
+              placeholder="Nick ou e-mail"
               className="w-full bg-[#16211A] border border-[#2A3B2E] focus:border-[#5FBE79] outline-none rounded-xl px-4 py-3 text-[#E7E9E2] placeholder:text-[#4A574E] text-sm"
             />
             <input
@@ -553,6 +582,13 @@ function LinkScreen({ onLinked }) {
               gerar outro código.
             </p>
             <input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              type="email"
+              placeholder="E-mail (opcional, alternativa pra entrar)"
+              className="w-full bg-[#16211A] border border-[#2A3B2E] focus:border-[#5FBE79] outline-none rounded-xl px-4 py-3 text-[#E7E9E2] placeholder:text-[#4A574E] text-sm"
+            />
+            <input
               value={senha}
               onChange={(e) => setSenha(e.target.value)}
               type="password"
@@ -607,12 +643,16 @@ function LinkScreen({ onLinked }) {
 
 function HomeScreen({ nick, setTab, authToken }) {
   const [latestPost, setLatestPost] = useState(null);
+  const [onlineCount, setOnlineCount] = useState(null);
 
   useEffect(() => {
     if (!authToken) return;
     apiFetch("/app/feed/list", { token: authToken })
       .then((data) => setLatestPost((data.posts || [])[0] || null))
       .catch(() => setLatestPost(null));
+    apiFetch("/app/players/online", { token: authToken })
+      .then((data) => setOnlineCount((data.players || []).length))
+      .catch(() => setOnlineCount(null));
   }, [authToken]);
 
   const shortcuts = [
@@ -628,7 +668,7 @@ function HomeScreen({ nick, setTab, authToken }) {
         <p className="text-lg font-bold text-[#E7E9E2]">{nick}</p>
         <div className="mt-4 flex items-center gap-2 text-[#5FBE79] text-sm font-medium">
           <Circle size={8} className="fill-[#5FBE79]" />
-          {PLAYERS_ONLINE} jogadores online agora
+          {onlineCount === null ? "…" : onlineCount} jogadores online agora
         </div>
       </div>
 
@@ -746,6 +786,13 @@ function AudioRecordButton({ onRecorded }) {
   const chunksRef = useRef([]);
   const streamRef = useRef(null);
   const timerRef = useRef(null);
+  // Guarda o tempo em uma ref, nao so no state: o callback "onstop" do
+  // MediaRecorder e definido uma unica vez, dentro de start(), e fica preso
+  // ao valor de "seconds" QUE EXISTIA NAQUELE MOMENTO (0, antes do timer
+  // rodar) -- nunca ve as atualizacoes do state depois disso. A UI (que le
+  // "seconds" direto no render) conta certinho na tela, mas sem essa ref o
+  // audio sempre seria salvo com duracao "0:00", nunca a duracao real.
+  const secondsRef = useRef(0);
 
   const start = async () => {
     setError("");
@@ -765,16 +812,20 @@ function AudioRecordButton({ onRecorded }) {
         const reader = new FileReader();
         reader.onloadend = () => {
           const base64 = String(reader.result).split(",")[1];
-          onRecorded(base64, mimeType, seconds);
+          onRecorded(base64, mimeType, secondsRef.current);
         };
         reader.readAsDataURL(blob);
       };
 
       recorder.start();
       recorderRef.current = recorder;
+      secondsRef.current = 0;
       setSeconds(0);
       setRecording(true);
-      timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
+      timerRef.current = setInterval(() => {
+        secondsRef.current += 1;
+        setSeconds(secondsRef.current);
+      }, 1000);
     } catch (err) {
       setError("Sem acesso ao microfone");
     }
@@ -845,6 +896,49 @@ function ImageBubble({ url }) {
   );
 }
 
+// Fotos de celular moderno passam de 15MB com facilidade (o limite que o
+// backend impoe) -- sem isso, o usuario escolhia a foto, esperava o
+// upload rodar (as vezes em dados moveis), e so entao recebia um erro
+// generico de "arquivo grande demais". Reduz a imagem ANTES de subir:
+// evita o erro quase sempre, e economiza dados moveis de quem esta
+// mandando. GIFs sao passados direto (comprimir via canvas perderia a
+// animacao).
+function compressImage(file, maxDimension = 1600, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    if (file.type === "image/gif") {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve({ base64: String(reader.result).split(",")[1], mimetype: file.type });
+      reader.onerror = () => reject(new Error("falha ao ler o arquivo"));
+      reader.readAsDataURL(file);
+      return;
+    }
+
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      let { width, height } = img;
+      if (width > maxDimension || height > maxDimension) {
+        const scale = maxDimension / Math.max(width, height);
+        width = Math.round(width * scale);
+        height = Math.round(height * scale);
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, width, height);
+      const dataUrl = canvas.toDataURL("image/jpeg", quality);
+      resolve({ base64: dataUrl.split(",")[1], mimetype: "image/jpeg" });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("falha ao processar a imagem"));
+    };
+    img.src = objectUrl;
+  });
+}
+
 function ImagePickerButton({ onPicked }) {
   const inputRef = useRef(null);
   const [error, setError] = useState("");
@@ -858,12 +952,9 @@ function ImagePickerButton({ onPicked }) {
       return;
     }
     setError("");
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const base64 = String(reader.result).split(",")[1];
-      onPicked(base64, file.type);
-    };
-    reader.readAsDataURL(file);
+    compressImage(file)
+      .then(({ base64, mimetype }) => onPicked(base64, mimetype))
+      .catch(() => setError("Não foi possível processar a imagem"));
   };
 
   return (
@@ -2973,7 +3064,7 @@ function ProfileScreen({ nick, role }) {
   );
 }
 
-function ConfigScreen({ setTab }) {
+function ConfigScreen({ setTab, onLogout }) {
   const links = [
     { id: "perfil", label: "Perfil", desc: "Seu nick, cargo e estatísticas", icon: Users },
     { id: "pontos", label: "EdenPoints", desc: "Missões, saldo de pontos e resgate", icon: Trophy },
@@ -3051,7 +3142,14 @@ function ConfigScreen({ setTab }) {
 
       <div>
         <p className="text-xs uppercase tracking-[0.14em] text-[#647065] mb-3">Conta</p>
-        <button className="w-full bg-[#1C2A20] border border-[#2A3B2E] rounded-xl p-4 flex items-center justify-between text-left">
+        <button
+          onClick={() => {
+            if (confirm("Desvincular e sair da conta nesse aparelho? Você pode entrar de novo com nick e senha, ou vinculando um novo código.")) {
+              onLogout();
+            }
+          }}
+          className="w-full bg-[#1C2A20] border border-[#2A3B2E] rounded-xl p-4 flex items-center justify-between text-left"
+        >
           <span className="text-sm font-medium text-[#C96A5A]">Desvincular conta</span>
           <ChevronRight size={16} className="text-[#4A574E]" />
         </button>
@@ -3063,16 +3161,51 @@ function ConfigScreen({ setTab }) {
 // ------------------------------------ App ---------------------------------------
 
 export default function EdenMCApp() {
-  const [linked, setLinked] = useState(false);
-  const [nick, setNick] = useState("");
-  const [authToken, setAuthToken] = useState("");
-  const [myUuid, setMyUuid] = useState("");
+  // Sessao salva localmente -- assim o app nao pede pra vincular de novo
+  // toda vez que abre. So le uma vez, na montagem inicial (useState com
+  // funcao de inicializacao roda so na primeira renderizacao).
+  const [session] = useState(() => {
+    try {
+      const raw = localStorage.getItem("edenmc:session");
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null; // localStorage indisponivel ou dado corrompido -- pede login normal
+    }
+  });
+
+  const [linked, setLinked] = useState(!!session);
+  const [nick, setNick] = useState(session?.nick || "");
+  const [authToken, setAuthToken] = useState(session?.token || "");
+  const [myUuid, setMyUuid] = useState(session?.uuid || "");
   const [tab, setTab] = useState("home");
   const [chatSpace, setChatSpace] = useState("servidor"); // servidor | app
   const ROLES = [null, "Moderador", "Administrador"];
   const [roleIndex, setRoleIndex] = useState(1); // alternar pra simular cargos diferentes
   const role = ROLES[roleIndex];
   const isStaff = !!role;
+
+  // Chamado tanto no vinculo quanto no login -- guarda a sessao pra
+  // sobreviver a proxima vez que o app for aberto.
+  const persistSession = (n, tok, uuid) => {
+    try {
+      localStorage.setItem("edenmc:session", JSON.stringify({ nick: n, token: tok, uuid }));
+    } catch {
+      // localStorage indisponivel (modo privado, storage cheio, etc.) --
+      // o app ainda funciona nessa sessao, so nao vai lembrar da proxima vez
+    }
+  };
+
+  const logout = () => {
+    try {
+      localStorage.removeItem("edenmc:session");
+    } catch {
+      // nada a fazer se nem isso funcionar
+    }
+    setLinked(false);
+    setAuthToken("");
+    setMyUuid("");
+    setNick("");
+  };
 
   // Chat em tempo real: uma conexão só, aberta assim que loga, mantida
   // enquanto o app estiver aberto — não depende de qual aba está ativa,
@@ -3106,14 +3239,12 @@ export default function EdenMCApp() {
   useEffect(() => {
     if (!linked || !authToken) return;
 
-    const socket = new WebSocket(`${WS_BASE_URL}/ws?kind=app&token=${encodeURIComponent(authToken)}`);
-    socketRef.current = socket;
+    let cancelled = false;
+    let socket = null;
+    let reconnectTimer = null;
+    let attempt = 0;
 
-    socket.onopen = () => setWsConnected(true);
-    socket.onclose = () => setWsConnected(false);
-    socket.onerror = () => setWsConnected(false);
-
-    socket.onmessage = (event) => {
+    const handleMessage = (event) => {
       let data;
       try {
         data = JSON.parse(event.data);
@@ -3143,7 +3274,41 @@ export default function EdenMCApp() {
       }
     };
 
-    return () => socket.close();
+    // Sem isso, qualquer soluco de rede (trocar de wifi pra dados moveis,
+    // o app voltar do segundo plano, o backend reiniciar) deixava o chat
+    // mudo pro resto da sessao -- o unico jeito de voltar a funcionar era
+    // fechar e abrir o app de novo. O backoff crescente (2s, 4s, 8s...) evita
+    // martelar o servidor com tentativas se ele realmente cair por um tempo.
+    const connect = () => {
+      if (cancelled) return;
+      socket = new WebSocket(`${WS_BASE_URL}/ws?kind=app&token=${encodeURIComponent(authToken)}`);
+      socketRef.current = socket;
+
+      socket.onopen = () => {
+        attempt = 0;
+        setWsConnected(true);
+      };
+
+      socket.onclose = () => {
+        setWsConnected(false);
+        if (cancelled) return;
+        const delay = Math.min(30000, 2000 * 2 ** attempt);
+        attempt += 1;
+        reconnectTimer = setTimeout(connect, delay);
+      };
+
+      socket.onerror = () => socket.close(); // onclose cuida da reconexao
+
+      socket.onmessage = handleMessage;
+    };
+
+    connect();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(reconnectTimer);
+      socket?.close();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linked, authToken]);
 
@@ -3151,7 +3316,14 @@ export default function EdenMCApp() {
   // próprio remetente (evita eco/duplicata), então o otimista aqui é quem
   // faz a mensagem aparecer na hora pra quem mandou.
   const sendChat = (channel, scopeId, text) => {
-    socketRef.current?.send(JSON.stringify({ channel, scopeId: scopeId || null, text }));
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ channel, scopeId: scopeId || null, text }));
+    }
+    // Se o socket nao estiver aberto (reconectando, por exemplo), a
+    // mensagem nao sai -- ainda assim mostramos o eco local abaixo, pra
+    // nao travar a digitação. Isso significa que, numa reconexao rara, a
+    // mensagem pode aparecer só pro remetente e nao chegar a ninguem.
+    // Aceitavel por enquanto; um "reenviar" ficaria pra uma proxima etapa.
     const key = roomKeyFor(channel, scopeId, myUuid, myUuid);
     setRooms((r) => ({
       ...r,
@@ -3200,10 +3372,12 @@ export default function EdenMCApp() {
           {!linked ? (
             <LinkScreen
               onLinked={(n, tok) => {
+                const uuid = decodeJwtPayload(tok).uuid || "";
                 setNick(n);
                 setAuthToken(tok);
-                setMyUuid(decodeJwtPayload(tok).uuid || "");
+                setMyUuid(uuid);
                 setLinked(true);
+                persistSession(n, tok, uuid);
               }}
             />
           ) : (
@@ -3213,6 +3387,7 @@ export default function EdenMCApp() {
                 role={role}
                 onOpenConfig={() => setTab("config")}
                 onOpenProfile={() => setTab("perfil")}
+                authToken={authToken}
               />
               {tab === "home" && <HomeScreen nick={nick} setTab={setTab} authToken={authToken} />}
               {tab === "chat" && (
@@ -3249,7 +3424,7 @@ export default function EdenMCApp() {
               {tab === "sugestoes" && <SuggestionsScreen isStaff={isStaff} authToken={authToken} />}
               {tab === "perfil" && <ProfileScreen nick={nick} role={role} />}
               {tab === "pontos" && <PointsScreen authToken={authToken} />}
-              {tab === "config" && <ConfigScreen setTab={setTab} />}
+              {tab === "config" && <ConfigScreen setTab={setTab} onLogout={logout} />}
               <BottomNav tab={tab} setTab={setTab} chatSpace={chatSpace} />
             </>
           )}
