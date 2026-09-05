@@ -239,3 +239,93 @@ de chaves/parênteses do arquivo inteiro, mas o primeiro teste real é o
 build do GitHub Actions.
 
 ---
+
+## Incidente: domínio excluído do Cloudflare (04/09)
+
+Boa parte de um lote de bugs reportados nesse dia (contador de online
+zerado, "Failed to fetch" nos amigos, chat não entregando) tinha uma causa
+raiz em comum, **não relacionada a código**: o Cloudflare excluiu a zona
+`edenmc.com.br` automaticamente, porque os nameservers pararam de apontar
+pra eles. Sem a zona, o `api.edenmc.com.br` parou de resolver — o túnel
+(`cloudflared`) continuava "conectando" normalmente (ele autentica pela
+conta, não pelo domínio), mas o domínio em si não levava a lugar nenhum.
+
+Resolvido re-adicionando o domínio no Cloudflare e conferindo os
+nameservers no registro.br. Vale ficar de olho pra isso não se repetir —
+o Cloudflare avisa por e-mail quando algo assim acontece.
+
+## Histórico de chat (mensagens sumiam ao reabrir o app)
+
+O backend sempre guardou as mensagens (`db.addMessage`), mas nunca existia
+uma rota pra consultar esse histórico -- o app só tinha as mensagens que
+chegavam ao vivo por WebSocket durante a sessão atual. Isso causava dois
+sintomas reportados: conversa global sumindo ao fechar/abrir o app, e
+mensagens privadas (DM) se perdendo pra sempre se o destinatário não
+estivesse com o app aberto no exato momento do envio.
+
+- **Backend:** nova rota `GET /app/chat/history?channel=X&partnerUuid=Y`.
+  Cobre `global` (todo mundo) e `tell`/`app-dm` (junta as duas direções da
+  conversa entre duas pessoas). `cla`/`aliados` ficam de fora por enquanto
+  (combinado, foco no chat do app primeiro).
+- **App:** busca o histórico do chat global assim que o WebSocket conecta,
+  e o histórico de uma conversa privada assim que ela é aberta (tanto na
+  aba Amigos quanto na aba Chat → App). Só busca uma vez por conversa
+  (não repete a busca a cada re-render).
+
+**Arquivos alterados:** `edenmc-backend/src/db.js`,
+`edenmc-backend/src/routes/app.js`, `edenmc-mobile/src/App.jsx`
+
+**Testes:** `edenmc-backend/test-chat-history.js` (novo, 10 casos) —
+bateria completa (15 suítes) passando.
+
+## Áudio: o botão "funcionava" mas nunca gravava nada de verdade
+
+O ícone do microfone ficava com a cor de **erro** (não uma cor neutra) ao
+tentar gravar, sem gravar nada. Causa: o app roda dentro de um WebView
+(não um navegador completo), e o WebView tem sua **própria camada de
+permissão**, separada da permissão do Android — o `getUserMedia()` do
+navegador pedia acesso ao microfone, e ninguém no lado nativo respondia
+"pode", então a chamada falhava na hora.
+
+- O projeto Android desse app é **gerado do zero a cada build** (não fica
+  salvo no repositório) — então a correção não é um arquivo pra editar,
+  é um passo novo no workflow do GitHub Actions que "remenda" o projeto
+  logo depois dele ser gerado: adiciona a permissão `RECORD_AUDIO` no
+  manifest, e sobrescreve o `MainActivity.java` pra conceder a permissão
+  ao WebView quando ele pedir.
+- ⚠️ Isso mexe em como o WebView lida com permissões de forma geral — não
+  deveria afetar o seletor de fotos (que usa `<input type="file">`, um
+  mecanismo diferente), mas como não consigo compilar/testar isso aqui,
+  **testem tanto áudio quanto foto depois de atualizar o APK**, pra
+  garantir que nada quebrou.
+
+**Arquivos alterados:** `edenmc-mobile/.github/workflows/build-apk.yml`
+
+## Vídeo curto no chat (recurso novo, a pedido)
+
+Só upload de vídeo já existente (galeria), não gravação ao vivo — isso
+evita precisar de mais permissões nativas (câmera) além da de microfone
+que já foi tratada acima.
+
+- **Backend:** `src/media.js` agora aceita `video/mp4`, `video/webm`,
+  `video/quicktime` e `video/3gpp`. Limite geral subiu de 15MB pra 25MB
+  (dá folga confortável pro "por volta de 10MB" pedido). Cuidado tomado:
+  `video/webm` e `audio/webm` usam extensões internas diferentes pra não
+  se confundirem ao servir o arquivo de volta com o `Content-Type` errado
+  (testei isso especificamente, dava pra dar errado fácil).
+- **App:** novo botão de vídeo ao lado do de foto, no chat privado (DM).
+  Sem compressão (diferente de foto, vídeo não dá pra reprocessar fácil
+  no navegador) — só valida o tamanho antes de tentar enviar (limite de
+  20MB no app, abaixo do teto do backend, pra sobrar margem de erro).
+
+**Arquivos alterados:** `edenmc-backend/src/media.js`,
+`edenmc-mobile/src/App.jsx`
+
+**Testes:** validação manual de que `video/webm` não colide com
+`audio/webm` ao servir de volta o `Content-Type` certo, mais a bateria
+completa (15 suítes) confirmando que nada mais quebrou.
+
+⚠️ A parte de vídeo no app (novo botão, `VideoBubble`) não pôde ser
+testada de verdade aqui, mesmo aviso de sempre — só o build real confirma.
+
+---

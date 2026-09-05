@@ -36,6 +36,45 @@ jobs:
           npx cap add android
           npx cap sync android
 
+      - name: Permissão de microfone (getUserMedia precisa disso pra gravar áudio)
+        run: |
+          # O projeto Android e gerado do zero a cada build (nao fica
+          # versionado no git), entao qualquer permissao nativa precisa ser
+          # "remendada" aqui, logo apos ser gerado.
+          #
+          # Duas coisas sao necessarias pro botao de gravar audio funcionar:
+          # 1) a permissao RECORD_AUDIO no manifest (senao o Android nem
+          #    deixa pedir acesso ao microfone)
+          # 2) o WebView conceder a permissao quando o getUserMedia() do
+          #    navegador pedir -- isso e uma camada SEPARADA da permissao
+          #    do Android, e o Capacitor nao faz isso sozinho por padrao.
+          #    Sem isso, getUserMedia() falha na hora com erro de permissao,
+          #    mesmo com a permissao do Android concedida -- e exatamente o
+          #    bug que fazia o botao de audio ficar preso no estado de erro.
+          sed -i '/<application/i\    <uses-permission android:name="android.permission.RECORD_AUDIO" />' android/app/src/main/AndroidManifest.xml
+
+          cat > android/app/src/main/java/com/edenmc/app/MainActivity.java << 'JAVA_EOF'
+          package com.edenmc.app;
+
+          import android.os.Bundle;
+          import android.webkit.PermissionRequest;
+          import android.webkit.WebChromeClient;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  this.bridge.getWebView().setWebChromeClient(new WebChromeClient() {
+                      @Override
+                      public void onPermissionRequest(final PermissionRequest request) {
+                          runOnUiThread(() -> request.grant(request.getResources()));
+                      }
+                  });
+              }
+          }
+          JAVA_EOF
+
       - name: Compilar o APK (debug)
         working-directory: android
         run: ./gradlew assembleDebug

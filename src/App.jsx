@@ -39,6 +39,7 @@ import {
   Mic,
   Square,
   Trophy,
+  Video as VideoIcon,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -128,6 +129,10 @@ function parseChatText(rawText) {
   if (typeof rawText === "string" && rawText.startsWith("IMAGE::")) {
     const url = rawText.slice("IMAGE::".length);
     return { media: true, mediaUrl: url };
+  }
+  if (typeof rawText === "string" && rawText.startsWith("VIDEO::")) {
+    const url = rawText.slice("VIDEO::".length);
+    return { video: true, videoUrl: url };
   }
   return { text: rawText };
 }
@@ -896,6 +901,18 @@ function ImageBubble({ url }) {
   );
 }
 
+function VideoBubble({ url }) {
+  return (
+    <video
+      src={url}
+      controls
+      playsInline
+      preload="metadata"
+      className="max-w-[220px] max-h-[220px] rounded-lg border border-[#2A3B2E] bg-black"
+    />
+  );
+}
+
 // Fotos de celular moderno passam de 15MB com facilidade (o limite que o
 // backend impoe) -- sem isso, o usuario escolhia a foto, esperava o
 // upload rodar (as vezes em dados moveis), e so entao recebia um erro
@@ -971,11 +988,58 @@ function ImagePickerButton({ onPicked }) {
   );
 }
 
+// Video nao da pra comprimir facil no navegador (diferente de imagem, que
+// da pra redesenhar num <canvas>) -- so valida o tamanho antes de tentar
+// subir, com um limite um pouco abaixo do teto do backend (25MB) pra
+// sobrar margem. Pedido do EdenAfk: vídeos curtos, na faixa de uns 10MB.
+const MAX_VIDEO_BYTES = 20 * 1024 * 1024;
+
+function VideoPickerButton({ onPicked }) {
+  const inputRef = useRef(null);
+  const [error, setError] = useState("");
+
+  const handleChange = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("video/")) {
+      setError("Escolha um vídeo");
+      return;
+    }
+    if (file.size > MAX_VIDEO_BYTES) {
+      setError(`Vídeo muito grande (máx. ${Math.floor(MAX_VIDEO_BYTES / 1024 / 1024)}MB) — tenta um clipe mais curto`);
+      return;
+    }
+    setError("");
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64 = String(reader.result).split(",")[1];
+      onPicked(base64, file.type);
+    };
+    reader.onerror = () => setError("Não foi possível ler o vídeo");
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <>
+      <input ref={inputRef} type="file" accept="video/*" onChange={handleChange} className="hidden" />
+      <button
+        onClick={() => inputRef.current?.click()}
+        title={error}
+        className="w-9 h-9 rounded-full bg-[#16211A] border border-[#2A3B2E] flex items-center justify-center shrink-0"
+      >
+        <VideoIcon size={15} className={error ? "text-[#E8A33D]" : "text-[#8FA093]"} />
+      </button>
+    </>
+  );
+}
+
 function ChannelThread({
   messages,
   onSend,
   onSendAudio,
   onSendImage,
+  onSendVideo,
   placeholder,
   accent = "#5FBE79",
   allowAudio = false,
@@ -1019,6 +1083,8 @@ function ChannelThread({
                 <AudioBubble url={m.audioUrl} me={m.me} duration={m.duration} />
               ) : m.media ? (
                 <ImageBubble url={m.mediaUrl} />
+              ) : m.video ? (
+                <VideoBubble url={m.videoUrl} />
               ) : (
                 <p className="text-sm leading-snug">{m.text}</p>
               )}
@@ -1036,6 +1102,9 @@ function ChannelThread({
           style={{ borderColor: undefined }}
         />
         {allowMedia && !draft && <ImagePickerButton onPicked={(base64, mimetype) => onSendImage(base64, mimetype)} />}
+        {allowMedia && !draft && onSendVideo && (
+          <VideoPickerButton onPicked={(base64, mimetype) => onSendVideo(base64, mimetype)} />
+        )}
         {allowAudio && !draft && (
           <AudioRecordButton onRecorded={(base64, mimetype, seconds) => onSendAudio(base64, mimetype, seconds)} />
         )}
@@ -1051,7 +1120,7 @@ function ChannelThread({
   );
 }
 
-function ChatScreen({ space, setSpace, rooms, sendChat, sendAudio, sendImage, myUuid, nick, authToken, presence, friendsList }) {
+function ChatScreen({ space, setSpace, rooms, sendChat, sendAudio, sendImage, sendVideo, myUuid, nick, authToken, presence, friendsList, loadHistory }) {
   const [gameMode, setGameMode] = useState(null); // null | "survival"
   const [channel, setChannel] = useState("cla"); // cla | aliados | global | tell
   const [myClan, setMyClan] = useState(null);
@@ -1061,6 +1130,16 @@ function ChatScreen({ space, setSpace, rooms, sendChat, sendAudio, sendImage, my
   const [onlinePlayers, setOnlinePlayers] = useState([]);
   const [appChannel, setAppChannel] = useState("geral"); // geral | cla | aliados | amigos
   const [appFriendTarget, setAppFriendTarget] = useState(null);
+
+  useEffect(() => {
+    if (tellTarget) loadHistory("tell", tellTarget.uuid, `dm-tell:${tellTarget.uuid}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tellTarget]);
+
+  useEffect(() => {
+    if (appFriendTarget) loadHistory("app-dm", appFriendTarget.uuid, `dm-app:${appFriendTarget.uuid}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appFriendTarget]);
 
   // Clã real: busca quem eu sou assim que a tela monta, e a lista de clãs
   // disponíveis sempre que a gente for mostrar a tela de "sem clã".
@@ -1479,6 +1558,7 @@ function ChatScreen({ space, setSpace, rooms, sendChat, sendAudio, sendImage, my
                   sendAudio("app-dm", appFriendTarget.uuid, base64, mimetype, seconds)
                 }
                 onSendImage={(base64, mimetype) => sendImage("app-dm", appFriendTarget.uuid, base64, mimetype)}
+                onSendVideo={(base64, mimetype) => sendVideo("app-dm", appFriendTarget.uuid, base64, mimetype)}
                 allowAudio
                 allowMedia
                 placeholder={`Mensagem para ${appFriendTarget.nick}...`}
@@ -1905,18 +1985,25 @@ function FriendsScreen({
   sendChat,
   sendAudio,
   sendImage,
+  sendVideo,
   myUuid,
   presence,
   authToken,
   friendsList,
   friendRequests,
   refreshFriends,
+  loadHistory,
 }) {
   const [active, setActive] = useState(null);
   const [draft, setDraft] = useState("");
   const [adding, setAdding] = useState(false);
   const [addNick, setAddNick] = useState("");
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (active) loadHistory("app-dm", active.uuid, `dm-app:${active.uuid}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
 
   const messages = active ? rooms[`dm-app:${active.uuid}`] || [] : [];
 
@@ -1929,6 +2016,11 @@ function FriendsScreen({
   const sendImagePicked = (base64, mimetype) => {
     if (!active) return;
     sendImage("app-dm", active.uuid, base64, mimetype);
+  };
+
+  const sendVideoPicked = (base64, mimetype) => {
+    if (!active) return;
+    sendVideo("app-dm", active.uuid, base64, mimetype);
   };
 
   const sendFriendRequest = async () => {
@@ -2004,6 +2096,8 @@ function FriendsScreen({
                   <AudioBubble url={m.audioUrl} me={m.me} duration={m.duration} />
                 ) : m.media ? (
                   <ImageBubble url={m.mediaUrl} />
+                ) : m.video ? (
+                  <VideoBubble url={m.videoUrl} />
                 ) : (
                   <p className="text-sm leading-snug">{m.text}</p>
                 )}
@@ -2013,6 +2107,7 @@ function FriendsScreen({
         </div>
         <div className="px-4 py-3 border-t border-[#2A3B2E] flex items-center gap-2">
           {!draft && <ImagePickerButton onPicked={sendImagePicked} />}
+          {!draft && <VideoPickerButton onPicked={sendVideoPicked} />}
           <input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -3287,6 +3382,7 @@ export default function EdenMCApp() {
       socket.onopen = () => {
         attempt = 0;
         setWsConnected(true);
+        loadHistory("global", null, "servidor:global");
       };
 
       socket.onclose = () => {
@@ -3315,6 +3411,32 @@ export default function EdenMCApp() {
   // Envia pro backend e já ecoa localmente — o backend nunca devolve pro
   // próprio remetente (evita eco/duplicata), então o otimista aqui é quem
   // faz a mensagem aparecer na hora pra quem mandou.
+  // Busca historico de uma conversa (global ou DM) via HTTP -- sem isso,
+  // fechar e abrir o app perdia a conversa (so existiam as mensagens que
+  // chegaram ao vivo por WebSocket durante a sessao atual), e uma DM
+  // mandada enquanto o destinatario nao estava com o app aberto ficava
+  // perdida pra sempre. So busca uma vez por roomKey (historyLoadedRef
+  // evita repetir a busca toda vez que o componente re-renderiza).
+  const historyLoadedRef = useRef(new Set());
+  const loadHistory = async (channel, partnerUuid, roomKey) => {
+    if (!authToken || historyLoadedRef.current.has(roomKey)) return;
+    historyLoadedRef.current.add(roomKey);
+    try {
+      const qs = partnerUuid ? `channel=${channel}&partnerUuid=${partnerUuid}` : `channel=${channel}`;
+      const data = await apiFetch(`/app/chat/history?${qs}`, { token: authToken });
+      const historyMsgs = (data.messages || []).map((m) => ({
+        id: `hist-${m.id}`,
+        from: m.from,
+        me: m.senderUuid === myUuid,
+        source: m.source,
+        ...parseChatText(m.text),
+      }));
+      setRooms((r) => ({ ...r, [roomKey]: [...historyMsgs, ...(r[roomKey] || [])] }));
+    } catch {
+      historyLoadedRef.current.delete(roomKey); // libera pra tentar de novo mais tarde
+    }
+  };
+
   const sendChat = (channel, scopeId, text) => {
     if (socketRef.current?.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({ channel, scopeId: scopeId || null, text }));
@@ -3365,6 +3487,19 @@ export default function EdenMCApp() {
     }
   };
 
+  const sendVideo = async (channel, scopeId, base64Data, mimetype) => {
+    try {
+      const data = await apiFetch("/app/media/upload", {
+        method: "POST",
+        body: { data: base64Data, mimetype },
+        token: authToken,
+      });
+      sendChat(channel, scopeId, `VIDEO::${API_BASE_URL}${data.path}`);
+    } catch (err) {
+      alert("Não foi possível enviar o vídeo: " + err.message);
+    }
+  };
+
   return (
     <div className="w-full min-h-screen bg-[#080B09] flex items-center justify-center py-8 px-4">
       <div className="w-[380px] h-[780px] bg-[#0F1712] rounded-[2.5rem] border-[6px] border-[#1A231C] shadow-2xl overflow-hidden flex flex-col">
@@ -3398,11 +3533,13 @@ export default function EdenMCApp() {
                   sendChat={sendChat}
                   sendAudio={sendAudio}
                   sendImage={sendImage}
+                  sendVideo={sendVideo}
                   myUuid={myUuid}
                   nick={nick}
                   authToken={authToken}
                   presence={presence}
                   friendsList={friendsList}
+                  loadHistory={loadHistory}
                 />
               )}
               {tab === "amigos" && (
@@ -3411,12 +3548,14 @@ export default function EdenMCApp() {
                   sendChat={sendChat}
                   sendAudio={sendAudio}
                   sendImage={sendImage}
+                  sendVideo={sendVideo}
                   myUuid={myUuid}
                   presence={presence}
                   authToken={authToken}
                   friendsList={friendsList}
                   friendRequests={friendRequests}
                   refreshFriends={refreshFriends}
+                  loadHistory={loadHistory}
                 />
               )}
               {tab === "loja" && <ShopScreen authToken={authToken} />}
