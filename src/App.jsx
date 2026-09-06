@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
+import { Capacitor } from "@capacitor/core";
 import {
   Home,
   Users,
@@ -3256,6 +3257,15 @@ function ConfigScreen({ setTab, onLogout }) {
 // ------------------------------------ App ---------------------------------------
 
 export default function EdenMCApp() {
+  // Se esta rodando dentro do app de verdade (Capacitor) ou sendo
+  // visualizado num navegador de computador -- varias coisas mudam
+  // dependendo disso (moldura visual, cargo de demonstracao).
+  const isNative = Capacitor.isNativePlatform();
+
+  // Gesto de deslizar entre Inicio <-> Chat (so entre esses dois, pra nao
+  // atrapalhar rolagem/gestos proprios de outras telas).
+  const swipeStartRef = useRef(null);
+
   // Sessao salva localmente -- assim o app nao pede pra vincular de novo
   // toda vez que abre. So le uma vez, na montagem inicial (useState com
   // funcao de inicializacao roda so na primeira renderizacao).
@@ -3274,9 +3284,26 @@ export default function EdenMCApp() {
   const [myUuid, setMyUuid] = useState(session?.uuid || "");
   const [tab, setTab] = useState("home");
   const [chatSpace, setChatSpace] = useState("servidor"); // servidor | app
+  // Cargo de verdade, vindo do backend (db.isStaff, alimentado pela
+  // presenca real do jogo) -- antes disso, "isStaff" so existia como um
+  // botao de demonstracao que ninguem real usava, entao staff de verdade
+  // nunca via os proprios botoes de staff (ex: "Postar" no Mural) sem
+  // saber que precisava clicar nesse botao escondido.
+  const [realIsStaff, setRealIsStaff] = useState(false);
+  useEffect(() => {
+    if (!authToken) return;
+    apiFetch("/app/me", { token: authToken })
+      .then((data) => setRealIsStaff(!!data.isStaff))
+      .catch(() => {});
+  }, [authToken]);
+
+  // Fora do app nativo (ou seja, testando no navegador do computador), o
+  // botao de demonstracao continua disponivel pra facilitar ver as telas
+  // de staff sem precisar de uma conta staff de verdade. Dentro do app
+  // instalado no celular, so vale o cargo real.
   const ROLES = [null, "Moderador", "Administrador"];
-  const [roleIndex, setRoleIndex] = useState(1); // alternar pra simular cargos diferentes
-  const role = ROLES[roleIndex];
+  const [roleIndex, setRoleIndex] = useState(1);
+  const role = isNative ? (realIsStaff ? "Staff" : null) : ROLES[roleIndex];
   const isStaff = !!role;
 
   // Chamado tanto no vinculo quanto no login -- guarda a sessao pra
@@ -3309,6 +3336,44 @@ export default function EdenMCApp() {
   const [wsConnected, setWsConnected] = useState(false);
   const [rooms, setRooms] = useState({}); // roomKey -> array de mensagens
   const [presence, setPresence] = useState({}); // uuid -> { online, afk, zone }
+
+  // Sem isso, o status de um amigo (online/offline) so atualizava quando
+  // um evento de presenca chegava AO VIVO por WebSocket durante essa
+  // sessao -- se a pessoa nao entrasse/saisse/ficasse AFK enquanto seu
+  // app estivesse aberto, ela continuava aparecendo "offline" pra sempre,
+  // mesmo estando online de verdade. Isso complementa os eventos ao vivo
+  // com uma sincronizacao completa periodica, usando a mesma rota que
+  // alimenta o contador de "X online" (GET /app/players/online).
+  useEffect(() => {
+    if (!authToken) return;
+    let cancelled = false;
+
+    const syncPresence = () => {
+      apiFetch("/app/players/online", { token: authToken })
+        .then((data) => {
+          if (cancelled) return;
+          const onlineUuids = new Set((data.players || []).map((p) => p.uuid));
+          setPresence((prev) => {
+            const next = { ...prev };
+            for (const player of data.players || []) {
+              next[player.uuid] = { online: true, afk: player.afk, zone: player.zone };
+            }
+            for (const uuid of Object.keys(next)) {
+              if (!onlineUuids.has(uuid) && next[uuid].online) next[uuid] = { ...next[uuid], online: false };
+            }
+            return next;
+          });
+        })
+        .catch(() => {});
+    };
+
+    syncPresence();
+    const interval = setInterval(syncPresence, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [authToken]);
   const [friendsList, setFriendsList] = useState([]);
   const [friendRequests, setFriendRequests] = useState([]);
 
@@ -3500,9 +3565,19 @@ export default function EdenMCApp() {
     }
   };
 
+  // A "moldura de celular" (cantos arredondados, borda, tamanho fixo) so
+  // faz sentido pra visualizar o app dentro de um navegador de computador
+  // -- dentro do app de verdade (Capacitor), isso desenhava uma borda por
+  // cima da tela real do aparelho, roubando area de toque nas bordas.
   return (
-    <div className="w-full min-h-screen bg-[#080B09] flex items-center justify-center py-8 px-4">
-      <div className="w-[380px] h-[780px] bg-[#0F1712] rounded-[2.5rem] border-[6px] border-[#1A231C] shadow-2xl overflow-hidden flex flex-col">
+    <div className={isNative ? "w-full h-full bg-[#0F1712] flex flex-col" : "w-full min-h-screen bg-[#080B09] flex items-center justify-center py-8 px-4"}>
+      <div
+        className={
+          isNative
+            ? "w-full h-full bg-[#0F1712] flex flex-col"
+            : "w-[380px] h-[780px] bg-[#0F1712] rounded-[2.5rem] border-[6px] border-[#1A231C] shadow-2xl overflow-hidden flex flex-col"
+        }
+      >
         <PhoneChrome>
           {!linked ? (
             <LinkScreen
@@ -3524,7 +3599,27 @@ export default function EdenMCApp() {
                 onOpenProfile={() => setTab("perfil")}
                 authToken={authToken}
               />
-              {tab === "home" && <HomeScreen nick={nick} setTab={setTab} authToken={authToken} />}
+              <div
+                className="flex-1 flex flex-col overflow-hidden"
+                onTouchStart={(e) => {
+                  const t = e.touches[0];
+                  swipeStartRef.current = { x: t.clientX, y: t.clientY };
+                }}
+                onTouchEnd={(e) => {
+                  if (!swipeStartRef.current) return;
+                  const t = e.changedTouches[0];
+                  const dx = t.clientX - swipeStartRef.current.x;
+                  const dy = t.clientY - swipeStartRef.current.y;
+                  swipeStartRef.current = null;
+                  // so conta como gesto horizontal se o movimento for bem
+                  // maior na horizontal do que na vertical -- evita
+                  // confundir com rolagem normal de uma lista
+                  if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+                  if (dx < 0 && tab === "home") setTab("chat"); // deslizou pra esquerda
+                  if (dx > 0 && tab === "chat") setTab("home"); // deslizou pra direita
+                }}
+              >
+                {tab === "home" && <HomeScreen nick={nick} setTab={setTab} authToken={authToken} />}
               {tab === "chat" && (
                 <ChatScreen
                   space={chatSpace}
@@ -3564,13 +3659,14 @@ export default function EdenMCApp() {
               {tab === "perfil" && <ProfileScreen nick={nick} role={role} />}
               {tab === "pontos" && <PointsScreen authToken={authToken} />}
               {tab === "config" && <ConfigScreen setTab={setTab} onLogout={logout} />}
+              </div>
               <BottomNav tab={tab} setTab={setTab} chatSpace={chatSpace} />
             </>
           )}
         </PhoneChrome>
       </div>
 
-      {linked && (
+      {linked && !isNative && (
         <button
           onClick={() => setRoleIndex((i) => (i + 1) % ROLES.length)}
           className="fixed bottom-4 right-4 text-[10px] bg-[#1C2A20] border border-[#2A3B2E] text-[#8FA093] rounded-full px-3 py-1.5"

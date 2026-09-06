@@ -329,3 +329,93 @@ completa (15 suítes) confirmando que nada mais quebrou.
 testada de verdade aqui, mesmo aviso de sempre — só o build real confirma.
 
 ---
+
+## Moldura de celular roubando área de toque (achado a partir de um print)
+
+O app inteiro estava dentro de uma "moldura de celular" (380x780px, cantos
+arredondados, borda de 6px) — útil pra visualizar o app num navegador de
+computador, mas isso estava sendo aplicado **também dentro do app de
+verdade**, desenhando uma borda por cima da tela real do aparelho e
+roubando área de toque nas bordas (provavelmente a causa dos ícones de
+imagem/vídeo "sem resposta" também — vale re-testar depois dessa
+correção).
+
+- **App:** a moldura agora só aparece quando o app está rodando num
+  navegador comum (`Capacitor.isNativePlatform()` retorna `false`). Dentro
+  do app instalado no celular, o conteúdo ocupa a tela inteira, sem borda
+  nem cantos arredondados artificiais.
+
+## Cargo de staff no app era só um botão de demonstração
+
+Descoberto ao investigar o item acima: mesmo depois de toda a permissão
+de staff real ter sido implementada no backend, o app decidia quais
+botões de staff mostrar (ex: "Postar" no Mural) usando um **botão de
+demonstração escondido** no canto da tela — nunca consultava se a pessoa
+era staff de verdade. Um staff de verdade não veria os próprios botões
+sem saber que precisava clicar nesse botão de teste.
+
+- **Backend:** nova rota `GET /app/me`, devolve `{uuid, nick, isStaff}`
+  usando o mesmo `db.isStaff()` que já protege as rotas de verdade.
+- **App:** busca isso ao entrar e usa pra decidir os botões de staff.
+  O botão de demonstração continua existindo, mas só fora do app nativo
+  (útil pra testar telas de staff localmente sem precisar de uma conta
+  staff de verdade).
+
+**Testes:** `test-staff-permission.js` ampliado com 2 casos novos
+verificando que `/app/me` bate com a mesma verdade usada pra proteger as
+rotas — bateria completa (15 suítes) passando.
+
+## Gesto de deslizar entre Início e Chat
+
+A pedido: deslizar a tela pra esquerda na Home vai pro Chat, deslizar pra
+direita no Chat volta pra Home. Não interfere com outras telas (só ativa
+nessas duas), nem com rolagem vertical de listas (o gesto só conta se o
+movimento for bem mais horizontal do que vertical).
+
+**Arquivos alterados:** `edenmc-mobile/src/App.jsx`
+
+## Amigo aparecia "offline" mesmo online de verdade
+
+Mesma causa raiz do contador de online zerado (ver o incidente do domínio
+acima, mais essa complementação): o status de um amigo só era atualizado
+por eventos **ao vivo** de WebSocket durante a sessão atual. Se a pessoa
+não gerasse um evento novo (entrar/sair/afk) enquanto seu app estivesse
+aberto, ela ficava "offline" pra sempre na tela, mesmo estando online.
+
+- **App:** agora busca `GET /app/players/online` periodicamente (a cada
+  30s) e faz uma sincronização completa do status de todo mundo, além dos
+  eventos ao vivo continuarem funcionando normalmente por cima disso.
+
+**Arquivos alterados:** `edenmc-mobile/src/App.jsx`
+
+## Contador de online não se recuperava sozinho de uma queda do backend
+
+Confirmado pelo teste que vocês fizeram: sair e entrar de novo no
+servidor corrigia o contador, provando a causa — presença só é enviada em
+eventos pontuais (entrar, sair, afk, mudar de zona). Se o backend cair um
+tempo com gente já online, ninguém "reavisa" que está online quando a
+conexão volta, e o contador fica preso em 0 até cada jogador sair e
+entrar manualmente.
+
+- **Plugin:** `EdenSocketClient` agora aceita um callback (`onConnected`)
+  disparado toda vez que a conexão com o backend é estabelecida — seja a
+  primeira vez, seja depois de qualquer queda. `PresenceListener` ganhou
+  um método `resyncAll()` que reenvia a presença de todo mundo que está
+  online nesse momento; esse método é chamado automaticamente através
+  desse callback. Resultado: uma queda do backend agora se autocorrige
+  sozinha assim que a conexão volta, sem precisar de ninguém sair e
+  entrar manualmente.
+- Isso também cobre o caso de um `/reload` do servidor com gente já
+  online (mesmo mecanismo, dispara na primeira conexão também).
+
+**Arquivos alterados:** `edenmc-plugin/.../EdenSocketClient.java`,
+`edenmc-plugin/.../PresenceListener.java`,
+`edenmc-plugin/.../EdenLinkPlugin.java`
+
+⚠️ Igual das outras vezes que mexi no plugin: não consigo compilar aqui
+(sem Maven/internet). Revisei a sintaxe com cuidado (inclusive corrigi um
+erro meu no meio do caminho — duplicidade de declaração de campo que eu
+mesmo introduzi e só percebi ao conferir de novo), mas só o `mvn package`
+de vocês confirma que compila de verdade.
+
+---
