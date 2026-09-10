@@ -41,6 +41,10 @@ import {
   Square,
   Trophy,
   Video as VideoIcon,
+  CornerUpLeft,
+  Pencil,
+  Trash2,
+  X,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -957,13 +961,24 @@ function compressImage(file, maxDimension = 1600, quality = 0.82) {
   });
 }
 
-function ImagePickerButton({ onPicked }) {
-  const inputRef = useRef(null);
-  const [error, setError] = useState("");
+// Video nao da pra comprimir facil no navegador (diferente de imagem, que
+// da pra redesenhar num <canvas>) -- so valida o tamanho antes de tentar
+// subir, com um limite um pouco abaixo do teto do backend (25MB) pra
+// sobrar margem. Pedido do EdenAfk: vídeos curtos, na faixa de uns 10MB.
+const MAX_VIDEO_BYTES = 20 * 1024 * 1024;
 
-  const handleChange = (e) => {
+// Botão único de anexo (como em qualquer app de mensagem) -- clicar
+// revela um pequeno menu com as opções (Foto / Vídeo), em vez de dois
+// ícones separados ocupando espaço permanente na barra de digitação.
+function AttachmentButton({ onPickedImage, onPickedVideo }) {
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState("");
+  const imageInputRef = useRef(null);
+  const videoInputRef = useRef(null);
+
+  const handleImageChange = (e) => {
     const file = e.target.files?.[0];
-    e.target.value = ""; // permite escolher o mesmo arquivo de novo depois
+    e.target.value = "";
     if (!file) return;
     if (!file.type.startsWith("image/")) {
       setError("Escolha uma imagem");
@@ -971,35 +986,11 @@ function ImagePickerButton({ onPicked }) {
     }
     setError("");
     compressImage(file)
-      .then(({ base64, mimetype }) => onPicked(base64, mimetype))
+      .then(({ base64, mimetype }) => onPickedImage(base64, mimetype))
       .catch(() => setError("Não foi possível processar a imagem"));
   };
 
-  return (
-    <>
-      <input ref={inputRef} type="file" accept="image/*" onChange={handleChange} className="hidden" />
-      <button
-        onClick={() => inputRef.current?.click()}
-        title={error}
-        className="w-9 h-9 rounded-full bg-[#16211A] border border-[#2A3B2E] flex items-center justify-center shrink-0"
-      >
-        <ImageIcon size={15} className={error ? "text-[#E8A33D]" : "text-[#8FA093]"} />
-      </button>
-    </>
-  );
-}
-
-// Video nao da pra comprimir facil no navegador (diferente de imagem, que
-// da pra redesenhar num <canvas>) -- so valida o tamanho antes de tentar
-// subir, com um limite um pouco abaixo do teto do backend (25MB) pra
-// sobrar margem. Pedido do EdenAfk: vídeos curtos, na faixa de uns 10MB.
-const MAX_VIDEO_BYTES = 20 * 1024 * 1024;
-
-function VideoPickerButton({ onPicked }) {
-  const inputRef = useRef(null);
-  const [error, setError] = useState("");
-
-  const handleChange = (e) => {
+  const handleVideoChange = (e) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
@@ -1015,23 +1006,50 @@ function VideoPickerButton({ onPicked }) {
     const reader = new FileReader();
     reader.onloadend = () => {
       const base64 = String(reader.result).split(",")[1];
-      onPicked(base64, file.type);
+      onPickedVideo(base64, file.type);
     };
     reader.onerror = () => setError("Não foi possível ler o vídeo");
     reader.readAsDataURL(file);
   };
 
   return (
-    <>
-      <input ref={inputRef} type="file" accept="video/*" onChange={handleChange} className="hidden" />
+    <div className="relative">
+      <input ref={imageInputRef} type="file" accept="image/*" onChange={handleImageChange} className="hidden" />
+      <input ref={videoInputRef} type="file" accept="video/*" onChange={handleVideoChange} className="hidden" />
       <button
-        onClick={() => inputRef.current?.click()}
+        onClick={() => setOpen((o) => !o)}
         title={error}
         className="w-9 h-9 rounded-full bg-[#16211A] border border-[#2A3B2E] flex items-center justify-center shrink-0"
       >
-        <VideoIcon size={15} className={error ? "text-[#E8A33D]" : "text-[#8FA093]"} />
+        <Plus size={16} className={`transition-transform ${open ? "rotate-45" : ""} ${error ? "text-[#E8A33D]" : "text-[#8FA093]"}`} />
       </button>
-    </>
+      {open && (
+        <>
+          {/* fundo transparente que fecha o menu ao tocar fora dele */}
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute bottom-11 left-0 bg-[#16211A] border border-[#2A3B2E] rounded-xl overflow-hidden shadow-xl z-20 w-36">
+            <button
+              onClick={() => {
+                setOpen(false);
+                imageInputRef.current?.click();
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-[#E7E9E2] active:bg-[#1C2A20]"
+            >
+              <ImageIcon size={16} className="text-[#8FA093]" /> Foto
+            </button>
+            <button
+              onClick={() => {
+                setOpen(false);
+                videoInputRef.current?.click();
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-[#E7E9E2] active:bg-[#1C2A20]"
+            >
+              <VideoIcon size={16} className="text-[#8FA093]" /> Vídeo
+            </button>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -1041,12 +1059,19 @@ function ChannelThread({
   onSendAudio,
   onSendImage,
   onSendVideo,
+  onEdit,
+  onDelete,
+  myUuid,
+  isStaff,
   placeholder,
   accent = "#5FBE79",
   allowAudio = false,
   allowMedia = false,
 }) {
   const [draft, setDraft] = useState("");
+  const [replyingTo, setReplyingTo] = useState(null); // { id, from, text }
+  const [editingId, setEditingId] = useState(null);
+  const [actionMenuId, setActionMenuId] = useState(null); // id da mensagem com o menu aberto
   const scrollRef = useRef(null);
 
   useEffect(() => {
@@ -1055,44 +1080,135 @@ function ChannelThread({
 
   const send = () => {
     if (!draft.trim()) return;
-    onSend(draft);
+    if (editingId) {
+      onEdit(editingId, draft);
+      setEditingId(null);
+    } else {
+      onSend(draft, replyingTo?.id);
+      setReplyingTo(null);
+    }
+    setDraft("");
+  };
+
+  const startEdit = (m) => {
+    setEditingId(m.id);
+    setReplyingTo(null);
+    setDraft(m.text || "");
+    setActionMenuId(null);
+  };
+
+  const startReply = (m) => {
+    setReplyingTo({ id: m.id, from: m.from, text: m.audio ? "🎤 áudio" : m.media ? "📷 foto" : m.video ? "🎥 vídeo" : m.text });
+    setEditingId(null);
+    setActionMenuId(null);
+  };
+
+  const cancelComposeExtra = () => {
+    setReplyingTo(null);
+    setEditingId(null);
     setDraft("");
   };
 
   return (
-    <div className="flex-1 flex flex-col">
+    <div className="flex-1 flex flex-col min-h-0">
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-2.5">
-        {messages.map((m) => (
-          <div key={m.id} className={`flex flex-col ${m.me ? "items-end" : "items-start"}`}>
-            <div className="flex items-center gap-1.5 mb-1 px-1">
-              {!m.me && (
-                <span className="text-[10px] font-semibold" style={{ color: accent }}>
-                  {m.from}
-                </span>
+        {messages.map((m) => {
+          const isDeleted = m.deleted;
+          const canEdit = m.me && !isDeleted && !m.audio && !m.media && !m.video && onEdit;
+          const canDelete = !isDeleted && (m.me || isStaff) && onDelete;
+          return (
+            <div key={m.id} className={`flex flex-col ${m.me ? "items-end" : "items-start"}`}>
+              <div className="flex items-center gap-1.5 mb-1 px-1">
+                {!m.me && (
+                  <span className="text-[10px] font-semibold" style={{ color: accent }}>
+                    {m.from}
+                  </span>
+                )}
+                {m.source && <SourceTag source={m.source} />}
+              </div>
+              <button
+                type="button"
+                onClick={() => !isDeleted && setActionMenuId((id) => (id === m.id ? null : m.id))}
+                className={`max-w-[75%] text-left rounded-2xl px-3.5 py-2 ${
+                  isDeleted
+                    ? "bg-transparent border border-dashed border-[#2A3B2E] text-[#4A574E]"
+                    : m.me
+                      ? "text-[#0F1712] rounded-br-sm"
+                      : "bg-[#1C2A20] border border-[#2A3B2E] text-[#E7E9E2] rounded-bl-sm"
+                }`}
+                style={!isDeleted && m.me ? { backgroundColor: accent } : {}}
+              >
+                {isDeleted ? (
+                  <p className="text-sm italic">mensagem apagada</p>
+                ) : (
+                  <>
+                    {m.replyTo && (
+                      <div
+                        className={`mb-1.5 pl-2 border-l-2 text-xs opacity-80 ${m.me ? "border-[#0F1712]/40" : "border-[#4A574E]"}`}
+                      >
+                        <p className="font-semibold">{m.replyTo.from}</p>
+                        <p className="truncate">{m.replyTo.text}</p>
+                      </div>
+                    )}
+                    {m.audio ? (
+                      <AudioBubble url={m.audioUrl} me={m.me} duration={m.duration} />
+                    ) : m.media ? (
+                      <ImageBubble url={m.mediaUrl} />
+                    ) : m.video ? (
+                      <VideoBubble url={m.videoUrl} />
+                    ) : (
+                      <p className="text-sm leading-snug">{m.text}</p>
+                    )}
+                    {m.edited && <p className="text-[10px] opacity-60 mt-0.5">(editado)</p>}
+                  </>
+                )}
+              </button>
+              {actionMenuId === m.id && !isDeleted && (
+                <div className="flex items-center gap-1 mt-1 bg-[#16211A] border border-[#2A3B2E] rounded-lg overflow-hidden">
+                  <button
+                    onClick={() => startReply(m)}
+                    className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-[#E7E9E2] active:bg-[#1C2A20]"
+                  >
+                    <CornerUpLeft size={12} /> Responder
+                  </button>
+                  {canEdit && (
+                    <button
+                      onClick={() => startEdit(m)}
+                      className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-[#E7E9E2] active:bg-[#1C2A20] border-l border-[#2A3B2E]"
+                    >
+                      <Pencil size={12} /> Editar
+                    </button>
+                  )}
+                  {canDelete && (
+                    <button
+                      onClick={() => {
+                        setActionMenuId(null);
+                        onDelete(m.id);
+                      }}
+                      className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-[#C96A5A] active:bg-[#1C2A20] border-l border-[#2A3B2E]"
+                    >
+                      <Trash2 size={12} /> Apagar
+                    </button>
+                  )}
+                </div>
               )}
-              {m.source && <SourceTag source={m.source} />}
             </div>
-            <div
-              className={`max-w-[75%] rounded-2xl px-3.5 py-2 ${
-                m.me
-                  ? "text-[#0F1712] rounded-br-sm"
-                  : "bg-[#1C2A20] border border-[#2A3B2E] text-[#E7E9E2] rounded-bl-sm"
-              }`}
-              style={m.me ? { backgroundColor: accent } : {}}
-            >
-              {m.audio ? (
-                <AudioBubble url={m.audioUrl} me={m.me} duration={m.duration} />
-              ) : m.media ? (
-                <ImageBubble url={m.mediaUrl} />
-              ) : m.video ? (
-                <VideoBubble url={m.videoUrl} />
-              ) : (
-                <p className="text-sm leading-snug">{m.text}</p>
-              )}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
+      {(replyingTo || editingId) && (
+        <div className="px-4 py-2 border-t border-[#2A3B2E] bg-[#16211A] flex items-center justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <p className="text-[10px] font-semibold" style={{ color: accent }}>
+              {editingId ? "Editando mensagem" : `Respondendo a ${replyingTo.from}`}
+            </p>
+            {replyingTo && <p className="text-xs text-[#8FA093] truncate">{replyingTo.text}</p>}
+          </div>
+          <button onClick={cancelComposeExtra} className="shrink-0 text-[#8FA093]">
+            <X size={16} />
+          </button>
+        </div>
+      )}
       <div className="px-4 py-3 border-t border-[#2A3B2E] flex items-center gap-2">
         <input
           value={draft}
@@ -1102,9 +1218,11 @@ function ChannelThread({
           className="flex-1 bg-[#16211A] border border-[#2A3B2E] rounded-full px-4 py-2.5 text-sm text-[#E7E9E2] placeholder:text-[#4A574E] outline-none"
           style={{ borderColor: undefined }}
         />
-        {allowMedia && !draft && <ImagePickerButton onPicked={(base64, mimetype) => onSendImage(base64, mimetype)} />}
-        {allowMedia && !draft && onSendVideo && (
-          <VideoPickerButton onPicked={(base64, mimetype) => onSendVideo(base64, mimetype)} />
+        {allowMedia && !draft && (
+          <AttachmentButton
+            onPickedImage={(base64, mimetype) => onSendImage(base64, mimetype)}
+            onPickedVideo={onSendVideo ? (base64, mimetype) => onSendVideo(base64, mimetype) : () => {}}
+          />
         )}
         {allowAudio && !draft && (
           <AudioRecordButton onRecorded={(base64, mimetype, seconds) => onSendAudio(base64, mimetype, seconds)} />
@@ -1247,7 +1365,7 @@ function ChatScreen({ space, setSpace, rooms, sendChat, sendAudio, sendImage, se
   }
 
   return (
-    <div className="flex-1 flex flex-col">
+    <div className="flex-1 flex flex-col min-h-0">
       <div className="px-4 pt-3 pb-2 flex gap-2">
         <button
           onClick={() => setSpace("servidor")}
@@ -1425,7 +1543,11 @@ function ChatScreen({ space, setSpace, rooms, sendChat, sendAudio, sendImage, se
               </div>
               <ChannelThread
                 messages={claMsgs}
-                onSend={(text) => sendChat("cla", null, text)}
+                onSend={(text, replyTo) => sendChat("cla", null, text, replyTo)}
+                onEdit={editMessage}
+                onDelete={deleteMessage}
+                myUuid={myUuid}
+                isStaff={isStaff}
                 placeholder="Mensagem para o clã..."
                 accent="#5FBE79"
               />
@@ -1443,7 +1565,11 @@ function ChatScreen({ space, setSpace, rooms, sendChat, sendAudio, sendImage, se
           {channel === "aliados" && myClan && (
             <ChannelThread
               messages={alliesMsgs}
-              onSend={(text) => sendChat("aliados", null, text)}
+              onSend={(text, replyTo) => sendChat("aliados", null, text, replyTo)}
+              onEdit={editMessage}
+              onDelete={deleteMessage}
+              myUuid={myUuid}
+              isStaff={isStaff}
               placeholder="Mensagem para os aliados..."
               accent="#7CD6A0"
             />
@@ -1452,7 +1578,11 @@ function ChatScreen({ space, setSpace, rooms, sendChat, sendAudio, sendImage, se
           {channel === "global" && (
             <ChannelThread
               messages={globalMsgs}
-              onSend={(text) => sendChat("global", null, text)}
+              onSend={(text, replyTo) => sendChat("global", null, text, replyTo)}
+              onEdit={editMessage}
+              onDelete={deleteMessage}
+              myUuid={myUuid}
+              isStaff={isStaff}
               placeholder="Mensagem para o servidor..."
               accent="#E8A33D"
             />
@@ -1504,7 +1634,11 @@ function ChatScreen({ space, setSpace, rooms, sendChat, sendAudio, sendImage, se
               </div>
               <ChannelThread
                 messages={rooms[`dm-tell:${tellTarget.uuid}`] || []}
-                onSend={(text) => sendChat("tell", tellTarget.uuid, text)}
+                onSend={(text, replyTo) => sendChat("tell", tellTarget.uuid, text, replyTo)}
+                onEdit={editMessage}
+                onDelete={deleteMessage}
+                myUuid={myUuid}
+                isStaff={isStaff}
                 placeholder={`Tell para ${tellTarget.nick}...`}
                 accent="#5FBE79"
               />
@@ -1554,7 +1688,11 @@ function ChatScreen({ space, setSpace, rooms, sendChat, sendAudio, sendImage, se
               </div>
               <ChannelThread
                 messages={rooms[`dm-app:${appFriendTarget.uuid}`] || []}
-                onSend={(text) => sendChat("app-dm", appFriendTarget.uuid, text)}
+                onSend={(text, replyTo) => sendChat("app-dm", appFriendTarget.uuid, text, replyTo)}
+                onEdit={editMessage}
+                onDelete={deleteMessage}
+                myUuid={myUuid}
+                isStaff={isStaff}
                 onSendAudio={(base64, mimetype, seconds) =>
                   sendAudio("app-dm", appFriendTarget.uuid, base64, mimetype, seconds)
                 }
@@ -1651,7 +1789,11 @@ function ChatScreen({ space, setSpace, rooms, sendChat, sendAudio, sendImage, se
                   </p>
                   <ChannelThread
                     messages={clanAppMsgs}
-                    onSend={(text) => sendChat("app-cla", null, text)}
+                    onSend={(text, replyTo) => sendChat("app-cla", null, text, replyTo)}
+                    onEdit={editMessage}
+                    onDelete={deleteMessage}
+                    myUuid={myUuid}
+                    isStaff={isStaff}
                     onSendAudio={(base64, mimetype, seconds) => sendAudio("app-cla", null, base64, mimetype, seconds)}
                     allowAudio
                     placeholder={`Mensagem pro ${myClan.name} (só app)...`}
@@ -1690,7 +1832,11 @@ function ChatScreen({ space, setSpace, rooms, sendChat, sendAudio, sendImage, se
                   </p>
                   <ChannelThread
                     messages={alliesAppMsgs}
-                    onSend={(text) => sendChat("app-aliados", null, text)}
+                    onSend={(text, replyTo) => sendChat("app-aliados", null, text, replyTo)}
+                    onEdit={editMessage}
+                    onDelete={deleteMessage}
+                    myUuid={myUuid}
+                    isStaff={isStaff}
                     onSendAudio={(base64, mimetype, seconds) =>
                       sendAudio("app-aliados", null, base64, mimetype, seconds)
                     }
@@ -1858,7 +2004,7 @@ function ClanManageScreen({ myClan, authToken, onBack, onChanged, clanList }) {
   const otherClans = (clanList || []).filter((c) => c.id !== myClan.id);
 
   return (
-    <div className="flex-1 flex flex-col">
+    <div className="flex-1 flex flex-col min-h-0">
       <div className="px-4 py-2.5 flex items-center gap-3 bg-[#12190F]">
         <button onClick={onBack} className="text-[#8FA093]">
           <ChevronLeft size={18} />
@@ -1987,7 +2133,10 @@ function FriendsScreen({
   sendAudio,
   sendImage,
   sendVideo,
+  editMessage,
+  deleteMessage,
   myUuid,
+  isStaff,
   presence,
   authToken,
   friendsList,
@@ -1996,7 +2145,6 @@ function FriendsScreen({
   loadHistory,
 }) {
   const [active, setActive] = useState(null);
-  const [draft, setDraft] = useState("");
   const [adding, setAdding] = useState(false);
   const [addNick, setAddNick] = useState("");
   const [error, setError] = useState("");
@@ -2005,24 +2153,6 @@ function FriendsScreen({
     if (active) loadHistory("app-dm", active.uuid, `dm-app:${active.uuid}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
-
-  const messages = active ? rooms[`dm-app:${active.uuid}`] || [] : [];
-
-  const send = () => {
-    if (!draft.trim() || !active) return;
-    sendChat("app-dm", active.uuid, draft);
-    setDraft("");
-  };
-
-  const sendImagePicked = (base64, mimetype) => {
-    if (!active) return;
-    sendImage("app-dm", active.uuid, base64, mimetype);
-  };
-
-  const sendVideoPicked = (base64, mimetype) => {
-    if (!active) return;
-    sendVideo("app-dm", active.uuid, base64, mimetype);
-  };
 
   const sendFriendRequest = async () => {
     if (!addNick.trim()) return;
@@ -2068,7 +2198,7 @@ function FriendsScreen({
     const afk = live?.afk || false;
 
     return (
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col min-h-0">
         <div className="px-4 py-3 border-b border-[#2A3B2E] flex items-center gap-3">
           <button onClick={() => setActive(null)} className="text-[#8FA093]">
             <ChevronLeft size={20} />
@@ -2083,51 +2213,21 @@ function FriendsScreen({
             </p>
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2.5">
-          {messages.map((m) => (
-            <div key={m.id} className={`flex ${m.me ? "justify-end" : "justify-start"}`}>
-              <div
-                className={`max-w-[70%] rounded-2xl px-3.5 py-2.5 ${
-                  m.me
-                    ? "bg-[#5FBE79] text-[#0F1712] rounded-br-sm"
-                    : "bg-[#1C2A20] border border-[#2A3B2E] text-[#E7E9E2] rounded-bl-sm"
-                }`}
-              >
-                {m.audio ? (
-                  <AudioBubble url={m.audioUrl} me={m.me} duration={m.duration} />
-                ) : m.media ? (
-                  <ImageBubble url={m.mediaUrl} />
-                ) : m.video ? (
-                  <VideoBubble url={m.videoUrl} />
-                ) : (
-                  <p className="text-sm leading-snug">{m.text}</p>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className="px-4 py-3 border-t border-[#2A3B2E] flex items-center gap-2">
-          {!draft && <ImagePickerButton onPicked={sendImagePicked} />}
-          {!draft && <VideoPickerButton onPicked={sendVideoPicked} />}
-          <input
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && send()}
-            placeholder="Mensagem..."
-            className="flex-1 bg-[#16211A] border border-[#2A3B2E] rounded-full px-4 py-2.5 text-sm text-[#E7E9E2] placeholder:text-[#4A574E] outline-none focus:border-[#5FBE79]"
-          />
-          {!draft && (
-            <AudioRecordButton
-              onRecorded={(base64, mimetype, seconds) => sendAudio("app-dm", active.uuid, base64, mimetype, seconds)}
-            />
-          )}
-          <button
-            onClick={send}
-            className="w-9 h-9 rounded-full bg-[#5FBE79] flex items-center justify-center shrink-0"
-          >
-            <Send size={15} className="text-[#0F1712]" />
-          </button>
-        </div>
+        <ChannelThread
+          messages={rooms[`dm-app:${active.uuid}`] || []}
+          onSend={(text, replyTo) => sendChat("app-dm", active.uuid, text, replyTo)}
+          onEdit={editMessage}
+          onDelete={deleteMessage}
+          myUuid={myUuid}
+          isStaff={isStaff}
+          onSendAudio={(base64, mimetype, seconds) => sendAudio("app-dm", active.uuid, base64, mimetype, seconds)}
+          onSendImage={(base64, mimetype) => sendImage("app-dm", active.uuid, base64, mimetype)}
+          onSendVideo={(base64, mimetype) => sendVideo("app-dm", active.uuid, base64, mimetype)}
+          allowAudio
+          allowMedia
+          placeholder="Mensagem..."
+          accent="#5FBE79"
+        />
       </div>
     );
   }
@@ -3414,19 +3514,55 @@ export default function EdenMCApp() {
 
       if (data.type === "message") {
         const key = roomKeyFor(data.channel, data.scopeId, data.senderUuid, myUuid);
-        setRooms((r) => ({
-          ...r,
-          [key]: [
-            ...(r[key] || []),
-            {
-              id: `${data.senderUuid}-${Date.now()}-${Math.random()}`,
-              from: data.from,
-              me: data.senderUuid === myUuid,
-              source: data.source,
+        const isMine = data.senderUuid === myUuid;
+        setRooms((r) => {
+          const list = r[key] || [];
+          if (isMine) {
+            // Essa e a confirmacao do servidor pra uma mensagem que EU
+            // mandei -- acha o eco pendente correspondente (mesmo texto,
+            // ainda sem id real) e troca pelo id de verdade, em vez de
+            // duplicar a mensagem na tela.
+            const idx = list.findIndex((m) => m.pending && m.text === data.text);
+            if (idx !== -1) {
+              const updated = [...list];
+              updated[idx] = { ...updated[idx], id: data.id, pending: false };
+              return { ...r, [key]: updated };
+            }
+          }
+          return {
+            ...r,
+            [key]: [
+              ...list,
+              {
+                id: data.id ?? `${data.senderUuid}-${Date.now()}-${Math.random()}`,
+                from: data.from,
+                me: isMine,
+                source: data.source,
+                replyTo: data.replyTo || null,
+                ...parseChatText(data.text),
+              },
+            ],
+          };
+        });
+      }
+
+      if (data.type === "message_edited" || data.type === "message_deleted") {
+        setRooms((r) => {
+          const next = { ...r };
+          for (const key of Object.keys(next)) {
+            const idx = next[key].findIndex((m) => m.id === data.id);
+            if (idx === -1) continue;
+            const updated = [...next[key]];
+            updated[idx] = {
+              ...updated[idx],
+              edited: !!data.edited,
+              deleted: !!data.deleted,
               ...parseChatText(data.text),
-            },
-          ],
-        }));
+            };
+            next[key] = updated;
+          }
+          return next;
+        });
       }
 
       if (data.type === "presence") {
@@ -3502,21 +3638,34 @@ export default function EdenMCApp() {
     }
   };
 
-  const sendChat = (channel, scopeId, text) => {
+  const sendChat = (channel, scopeId, text, replyTo) => {
     if (socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({ channel, scopeId: scopeId || null, text }));
+      socketRef.current.send(JSON.stringify({ channel, scopeId: scopeId || null, text, replyTo }));
     }
     // Se o socket nao estiver aberto (reconectando, por exemplo), a
     // mensagem nao sai -- ainda assim mostramos o eco local abaixo, pra
     // nao travar a digitação. Isso significa que, numa reconexao rara, a
     // mensagem pode aparecer só pro remetente e nao chegar a ninguem.
     // Aceitavel por enquanto; um "reenviar" ficaria pra uma proxima etapa.
+    //
+    // "pending: true" marca que isso e um eco OTIMISTA, com um id falso
+    // (nao veio do backend ainda) -- quando o servidor confirmar essa
+    // mesma mensagem de volta (ver handleMessage, que agora NAO exclui
+    // mais o remetente do proprio broadcast), a entrada pendente e trocada
+    // pela de verdade (com o id real). Sem isso, editar/apagar a propria
+    // mensagem logo depois de mandar nunca teria um id valido pra usar.
     const key = roomKeyFor(channel, scopeId, myUuid, myUuid);
+    const replySnapshot = replyTo
+      ? (() => {
+          const original = (rooms[key] || []).find((m) => m.id === replyTo);
+          return original ? { id: replyTo, from: original.from, text: original.text } : { id: replyTo, from: "", text: "" };
+        })()
+      : null;
     setRooms((r) => ({
       ...r,
       [key]: [
         ...(r[key] || []),
-        { id: `me-${Date.now()}`, from: nick, me: true, source: "app", ...parseChatText(text) },
+        { id: `me-${Date.now()}`, pending: true, from: nick, me: true, source: "app", replyTo: replySnapshot, ...parseChatText(text) },
       ],
     }));
   };
@@ -3565,6 +3714,48 @@ export default function EdenMCApp() {
     }
   };
 
+  // Edicao/exclusao atualizam o estado local na hora (otimista) -- a
+  // confirmacao definitiva chega depois via WebSocket (message_edited/
+  // message_deleted, ja tratado no handleMessage), que tambem cobre
+  // qualquer outro dispositivo/sessao aberta.
+  const editMessage = async (id, newText) => {
+    setRooms((r) => {
+      const next = { ...r };
+      for (const key of Object.keys(next)) {
+        const idx = next[key].findIndex((m) => m.id === id);
+        if (idx === -1) continue;
+        const updated = [...next[key]];
+        updated[idx] = { ...updated[idx], edited: true, ...parseChatText(newText) };
+        next[key] = updated;
+      }
+      return next;
+    });
+    try {
+      await apiFetch(`/app/chat/message/${id}/edit`, { method: "POST", body: { text: newText }, token: authToken });
+    } catch (err) {
+      alert("Não foi possível editar a mensagem: " + err.message);
+    }
+  };
+
+  const deleteMessage = async (id) => {
+    setRooms((r) => {
+      const next = { ...r };
+      for (const key of Object.keys(next)) {
+        const idx = next[key].findIndex((m) => m.id === id);
+        if (idx === -1) continue;
+        const updated = [...next[key]];
+        updated[idx] = { ...updated[idx], deleted: true };
+        next[key] = updated;
+      }
+      return next;
+    });
+    try {
+      await apiFetch(`/app/chat/message/${id}/delete`, { method: "POST", token: authToken });
+    } catch (err) {
+      alert("Não foi possível apagar a mensagem: " + err.message);
+    }
+  };
+
   // A "moldura de celular" (cantos arredondados, borda, tamanho fixo) so
   // faz sentido pra visualizar o app dentro de um navegador de computador
   // -- dentro do app de verdade (Capacitor), isso desenhava uma borda por
@@ -3600,7 +3791,7 @@ export default function EdenMCApp() {
                 authToken={authToken}
               />
               <div
-                className="flex-1 flex flex-col overflow-hidden"
+                className="flex-1 flex flex-col overflow-hidden min-h-0"
                 onTouchStart={(e) => {
                   const t = e.touches[0];
                   swipeStartRef.current = { x: t.clientX, y: t.clientY };
@@ -3644,7 +3835,10 @@ export default function EdenMCApp() {
                   sendAudio={sendAudio}
                   sendImage={sendImage}
                   sendVideo={sendVideo}
+                  editMessage={editMessage}
+                  deleteMessage={deleteMessage}
                   myUuid={myUuid}
+                  isStaff={isStaff}
                   presence={presence}
                   authToken={authToken}
                   friendsList={friendsList}

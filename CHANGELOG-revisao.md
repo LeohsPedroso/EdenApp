@@ -419,3 +419,97 @@ mesmo introduzi e só percebi ao conferir de novo), mas só o `mvn package`
 de vocês confirma que compila de verdade.
 
 ---
+
+## Contador mostrava gente online com o servidor desligado
+
+Reportado por vocês: servidor de Minecraft fora do ar, app mostrando "2
+online". Causa: a presença só era **atualizada** quando um evento
+chegava, nunca **zerada** quando o plugin (fonte da informação) deixava
+de estar conectado — o backend simplesmente guardava o último valor
+conhecido pra sempre, mesmo sem ninguém confirmando que ainda era verdade.
+
+- **Backend:** quando a conexão do plugin cai (por qualquer motivo —
+  servidor desligou, caiu, perdeu rede), o backend agora marca todo mundo
+  como offline imediatamente (`db.markAllOffline()`), em vez de manter o
+  último estado conhecido indefinidamente.
+
+**Arquivos alterados:** `edenmc-backend/src/db.js`, `edenmc-backend/server.js`
+
+**Testes:** `test-presence-offline.js` (novo). No caminho, achei e
+corrigi dois problemas a mais: (1) meu helper de teste WebSocket não
+mandava um frame de encerramento de verdade, o que mascarava justamente
+esse tipo de bug — corrigido pra simular direito um cliente real
+fechando a conexão; (2) usando esse helper corrigido, descobri que o
+servidor emitia o evento de desconexão **duas vezes** pra cada queda
+(inofensivo hoje por pura sorte de idempotência, mas corrigido). Bateria
+completa (16 suítes) passando.
+
+## Chat "fixo" — não dava pra rolar pra ver mensagens antigas
+
+O que parecia um pedido de gesto era na verdade rolagem básica quebrada:
+a lista de mensagens crescia pra caber tudo em vez de rolar internamente
+com uma altura fixa. Causa: uma pegadinha clássica de CSS flexbox — um
+container com `flex-1` não encolhe pra abrir espaço de rolagem a menos
+que se diga explicitamente (`min-height: 0`), e essa declaração faltava
+em 5 pontos da cadeia de containers entre a tela e a lista de mensagens.
+
+- **App:** adicionado `min-h-0` nos containers necessários. A rolagem
+  agora deve funcionar normalmente (arrastar pra cima mostra mensagens
+  antigas, pra baixo volta pra atual).
+
+**Arquivos alterados:** `edenmc-mobile/src/App.jsx`
+
+⚠️ Não pude ver isso renderizado de verdade (sem ambiente visual aqui) —
+é a explicação mais comum pra esse sintoma exato, e a correção é
+tecnicamente correta, mas testem a rolagem depois do build novo.
+
+---
+
+## Chat com cara de app de mensagem de verdade (responder, editar, apagar)
+
+### 1. Botão único de anexo
+Dois ícones separados (foto/vídeo) viraram um só ("+") que revela um
+menuzinho com as duas opções ao tocar — como em qualquer app de mensagem.
+
+### 2. Responder, editar e apagar mensagens
+- **Backend:** cada mensagem já tinha um id, mas era gerado de um jeito
+  que colidiria assim que o histórico (limitado a 500 mensagens) começasse
+  a cortar as mais antigas — corrigido pra usar um contador de verdade.
+  Duas rotas novas: `POST /app/chat/message/:id/edit` (só quem mandou,
+  só mensagens de texto) e `.../delete` (quem mandou, ou staff). As
+  mudanças chegam em tempo real pra quem já tinha visto a mensagem,
+  respeitando as mesmas regras de privacidade por canal já existentes
+  (uma edição numa conversa de clã só chega pros membros do clã, etc).
+- **Responder:** ao enviar, o app manda o id de qual mensagem está sendo
+  respondida; o backend guarda uma "foto" (quem mandou + texto) de como
+  ela estava naquele momento, pra continuar fazendo sentido mesmo que a
+  original seja editada ou apagada depois.
+- **Achado no caminho, corrigido:** quem manda uma mensagem nunca recebia
+  ela de volta confirmada pelo servidor (existia só um "eco local" com um
+  id falso) — sem um id real, não dava pra editar/apagar a própria
+  mensagem. Agora o remetente também recebe a confirmação, e o app troca
+  o eco falso pelo real sem duplicar na tela.
+- **App:** tocar numa mensagem abre um menuzinho (Responder /
+  Editar-se-for-sua / Apagar-se-for-sua-ou-staff). Mensagem respondida
+  mostra uma citação por cima; editada mostra "(editado)"; apagada vira
+  um balão tracejado "mensagem apagada".
+
+### 3. Duas implementações de chat viraram uma só
+A tela de Amigos tinha sua própria versão de chat, duplicada e
+separada da usada em clã/aliados/servidor/tell — corrigido, agora usa o
+mesmo componente (`ChannelThread`) em todo lugar, o que significa que
+responder/editar/apagar/áudio/vídeo funcionam igual em qualquer
+conversa, sem ter dado o dobro do trabalho pra manter as duas.
+
+**Arquivos alterados:** `edenmc-backend/src/db.js`,
+`edenmc-backend/src/routes/app.js`, `edenmc-backend/server.js`,
+`edenmc-backend/src/chatBus.js` (novo), `edenmc-mobile/src/App.jsx`
+
+**Testes:** `test-chat-actions.js` (novo, 12 casos: responder, editar,
+apagar, permissões, propagação em tempo real, e a confirmação do
+remetente). Bateria completa (17 suítes) passando.
+
+⚠️ A parte visual (`App.jsx`) não pôde ser vista renderizada de verdade
+aqui — só o build real confirma que ficou como esperado.
+
+---
