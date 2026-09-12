@@ -1126,8 +1126,9 @@ function ChannelThread({
                 )}
                 {m.source && <SourceTag source={m.source} />}
               </div>
-              <button
-                type="button"
+              <div
+                role="button"
+                tabIndex={0}
                 onClick={() => !isDeleted && setActionMenuId((id) => (id === m.id ? null : m.id))}
                 className={`max-w-[75%] text-left rounded-2xl px-3.5 py-2 ${
                   isDeleted
@@ -1151,18 +1152,24 @@ function ChannelThread({
                       </div>
                     )}
                     {m.audio ? (
-                      <AudioBubble url={m.audioUrl} me={m.me} duration={m.duration} />
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <AudioBubble url={m.audioUrl} me={m.me} duration={m.duration} />
+                      </div>
                     ) : m.media ? (
-                      <ImageBubble url={m.mediaUrl} />
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <ImageBubble url={m.mediaUrl} />
+                      </div>
                     ) : m.video ? (
-                      <VideoBubble url={m.videoUrl} />
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <VideoBubble url={m.videoUrl} />
+                      </div>
                     ) : (
                       <p className="text-sm leading-snug">{m.text}</p>
                     )}
                     {m.edited && <p className="text-[10px] opacity-60 mt-0.5">(editado)</p>}
                   </>
                 )}
-              </button>
+              </div>
               {actionMenuId === m.id && !isDeleted && (
                 <div className="flex items-center gap-1 mt-1 bg-[#16211A] border border-[#2A3B2E] rounded-lg overflow-hidden">
                   <button

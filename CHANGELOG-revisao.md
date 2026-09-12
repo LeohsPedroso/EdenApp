@@ -513,3 +513,63 @@ remetente). Bateria completa (17 suítes) passando.
 aqui — só o build real confirma que ficou como esperado.
 
 ---
+
+## Tela escura ao entrar no chat (crash real, não visual)
+
+### Causa: `<button>` dentro de `<button>`
+Ao adicionar o menu de responder/editar/apagar na sessão anterior, envolvi
+cada mensagem inteira num `<button>` clicável — mas mensagens de áudio
+(`AudioBubble`) e vídeo (`VideoBubble`, que usa `<video controls>`) já têm
+**botões/controles próprios por dentro**. Isso cria botão dentro de botão,
+que é HTML inválido — o navegador reestrutura o DOM sozinho quando
+encontra isso, e quando o React tentava atualizar a árvore depois (ex: ao
+carregar o histórico), a estrutura real não batia mais com o que o React
+esperava, e a renderização quebrava inteira — daí a tela ficar
+escura (só o fundo do app aparecendo, sem nenhum conteúdo).
+
+- **App:** trocado o `<button>` externo por uma `<div role="button">`
+  (mesma acessibilidade/clicabilidade, sem o problema de aninhamento).
+  Também adicionado `stopPropagation` nos cliques dentro de
+  áudio/imagem/vídeo, pra tocar um áudio ou abrir uma foto não abrir
+  também o menu de ações por cima.
+- **Rede de segurança adicionada:** um Error Boundary no `main.jsx` — se
+  algo quebrar de novo no futuro, a tela mostra o erro de verdade (com a
+  mensagem e onde aconteceu) em vez de ficar simplesmente escura sem
+  pista nenhuma. Vai ajudar a diagnosticar qualquer problema parecido
+  muito mais rápido.
+
+**Arquivos alterados:** `edenmc-mobile/src/App.jsx`, `edenmc-mobile/src/main.jsx`
+
+⚠️ Não pude reproduzir isso visualmente aqui (sem navegador/dispositivo),
+mas a causa (botão aninhado) é uma violação clara e bem documentada de
+HTML/React, exatamente no ponto que vocês descreveram (global e DM, as
+duas usando o mesmo componente). Testem de novo depois do build novo —
+se ainda escurecer, o Error Boundary agora vai mostrar o erro exato.
+
+## Versão do APK sempre "1.0 (1)", impedindo atualizar sem desinstalar
+
+Causa: o projeto Android é gerado do zero a cada build (não fica salvo no
+repositório), então o número de versão sempre voltava pro padrão do
+Capacitor — nunca aumentava. O Android **exige** que esse número sempre
+suba pra permitir instalar uma atualização por cima da versão anterior;
+sem isso, a instalação falha silenciosamente e só funciona desinstalando
+a versão antiga primeiro.
+
+- Novo passo no workflow do GitHub Actions: define `versionCode` e
+  `versionName` usando o número sequencial do próprio build
+  (`github.run_number`, que só aumenta a cada execução) — então toda vez
+  que vocês rodarem "Run workflow", sai uma versão nova de verdade
+  (`1.0.42`, `1.0.43`, etc.), e o Android reconhece como atualização.
+- O artefato publicado também ganhou o número da versão no nome
+  (`edenmc-v1.0.42` em vez de sempre `edenmc-debug-apk`), pra ficar fácil
+  saber qual é qual ao baixar builds antigos do histórico do Actions.
+
+**Arquivos alterados:** `edenmc-mobile/.github/workflows/build-apk.yml`
+
+⚠️ Não dá pra rodar o GitHub Actions daqui pra confirmar de verdade — a
+lógica é sólida (usa um valor que o próprio GitHub garante ser sempre
+crescente), mas o primeiro build de vocês é quem confirma. O passo
+imprime o `versionCode`/`versionName` resultante no log do Actions,
+então dá pra conferir ali se bateu certo.
+
+---

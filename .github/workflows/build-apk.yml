@@ -36,6 +36,20 @@ jobs:
           npx cap add android
           npx cap sync android
 
+      - name: Definir numero de versao unico (permite atualizar sem desinstalar)
+        run: |
+          # O projeto Android e gerado do zero a cada build, entao o
+          # versionCode sempre voltava pro padrao do Capacitor (nunca
+          # mudava) -- o Android EXIGE que esse numero sempre aumente pra
+          # deixar instalar uma versao nova por cima da antiga; sem isso,
+          # a instalacao falha silenciosamente e so funciona desinstalando
+          # a versao anterior primeiro. Usa o numero sequencial do proprio
+          # workflow do GitHub Actions (github.run_number), que so aumenta.
+          sed -i -E "s/versionCode [0-9]+/versionCode ${{ github.run_number }}/" android/app/build.gradle
+          sed -i -E 's/versionName "[^"]*"/versionName "1.0.${{ github.run_number }}"/' android/app/build.gradle
+          echo "--- versao definida ---"
+          grep -E "versionCode|versionName" android/app/build.gradle
+
       - name: Permissão de microfone (getUserMedia precisa disso pra gravar áudio)
         run: |
           # O projeto Android e gerado do zero a cada build (nao fica
@@ -82,5 +96,5 @@ jobs:
       - name: Publicar o APK como artefato do workflow
         uses: actions/upload-artifact@v4
         with:
-          name: edenmc-debug-apk
+          name: edenmc-v1.0.${{ github.run_number }}
           path: android/app/build/outputs/apk/debug/app-debug.apk
