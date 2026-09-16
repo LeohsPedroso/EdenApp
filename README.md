@@ -166,5 +166,5 @@ jogador baixa e instala manualmente, precisando permitir "fontes
 desconhecidas" no Android. Pra evitar esse aviso e facilitar instalação em
 massa, o caminho correto no médio prazo é a Play Store (exige conta de
 desenvolvedor Google, build assinada em modo release, e passar pela
-revisão deles).
+revisão deles)
 
