@@ -573,3 +573,37 @@ imprime o `versionCode`/`versionName` resultante no log do Actions,
 então dá pra conferir ali se bateu certo.
 
 ---
+
+## Tela escura, causa real confirmada (o Error Boundary funcionou)
+
+O Error Boundary adicionado na correção anterior funcionou exatamente
+como esperado — mostrou o erro de verdade em vez de tela escura, e
+revelou a causa: `ReferenceError: editMessage is not defined`. Minha
+correção anterior (trocar `<button>` por `<div>`) era real e válida, mas
+não era a causa raiz desse crash específico — tinha um segundo bug.
+
+### Causa: função passada pra um componente que nunca recebia ela
+`ChatScreen` (que renderiza a maioria das conversas — clã, aliados,
+servidor, tell) usa `editMessage`/`deleteMessage`/`isStaff`/`myUuid`
+internamente (repassando pro `ChannelThread`), mas a função `ChatScreen`
+**nunca recebia essas variáveis como propriedade** — nem na assinatura,
+nem na hora de ser chamada lá no topo do app. Em React, cada componente
+tem seu próprio escopo; só porque `editMessage` existe dentro do
+componente principal não significa que um componente diferente (como
+`ChatScreen`) consiga enxergar ela — precisa ser passada explicitamente,
+e isso foi esquecido nessa função especificamente (`FriendsScreen` já
+tinha sido corrigida direito antes).
+
+- **App:** `ChatScreen` agora recebe e repassa `editMessage`,
+  `deleteMessage`, `isStaff` e `myUuid` corretamente.
+
+**Arquivos alterados:** `edenmc-mobile/src/App.jsx`
+
+**Lição prática confirmada:** o Error Boundary da correção anterior
+funcionou perfeitamente — sem ele, esse bug continuaria parecendo
+"tela escura misteriosa" e teria sido bem mais difícil de identificar à
+distância. Se aparecer outro erro no futuro, manda o texto que aparece
+na tela (como dessa vez) — com isso, a causa fica óbvia na hora, em vez
+de eu precisar adivinhar.
+
+---

@@ -1246,7 +1246,7 @@ function ChannelThread({
   );
 }
 
-function ChatScreen({ space, setSpace, rooms, sendChat, sendAudio, sendImage, sendVideo, myUuid, nick, authToken, presence, friendsList, loadHistory }) {
+function ChatScreen({ space, setSpace, rooms, sendChat, sendAudio, sendImage, sendVideo, editMessage, deleteMessage, myUuid, isStaff, nick, authToken, presence, friendsList, loadHistory }) {
   const [gameMode, setGameMode] = useState(null); // null | "survival"
   const [channel, setChannel] = useState("cla"); // cla | aliados | global | tell
   const [myClan, setMyClan] = useState(null);
@@ -3827,7 +3827,10 @@ export default function EdenMCApp() {
                   sendAudio={sendAudio}
                   sendImage={sendImage}
                   sendVideo={sendVideo}
+                  editMessage={editMessage}
+                  deleteMessage={deleteMessage}
                   myUuid={myUuid}
+                  isStaff={isStaff}
                   nick={nick}
                   authToken={authToken}
                   presence={presence}
