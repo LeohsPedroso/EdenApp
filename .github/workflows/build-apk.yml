@@ -29,7 +29,26 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - uses: android-actions/setup-android@v3
+      - name: Configurar Android SDK (sem depender da action quebrada)
+        run: |
+          # android-actions/setup-android@v3 parou de funcionar: por dentro
+          # dela, tenta instalar um pacote chamado "tools" do SDK do
+          # Android que o Google removeu de vez do repositorio (pacote
+          # legado, substituido ha anos pelo "cmdline-tools", mas essa
+          # action nunca foi atualizada pra parar de pedir ele).
+          #
+          # As maquinas do GitHub Actions (ubuntu-latest) ja vem com um
+          # Android SDK completo pre-instalado -- nao precisamos de
+          # nenhuma action externa pra isso, so apontar as variaveis de
+          # ambiente certas pra ele e aceitar as licencas (o Gradle as
+          # vezes precisa baixar uma versao especifica de platform/
+          # build-tools na hora de compilar).
+          SDK_ROOT="/usr/local/lib/android/sdk"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          yes | "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          echo "--- cmdline-tools disponivel em: ---"
+          ls "$SDK_ROOT/cmdline-tools/latest/bin/" || echo "AVISO: nao encontrou cmdline-tools/latest -- ver o log completo se o build falhar mais na frente"
 
       - name: Adicionar e sincronizar a plataforma Android
         run: |

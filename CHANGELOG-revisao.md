@@ -607,3 +607,33 @@ na tela (como dessa vez) — com isso, a causa fica óbvia na hora, em vez
 de eu precisar adivinhar.
 
 ---
+
+## Build do GitHub Actions quebrou: action de terceiros abandonada
+
+Erro no log: `Warning: Failed to find package 'tools'` seguido de
+`sdkmanager failed with exit code 1`, na etapa `android-actions/setup-android@v3`.
+
+Causa: essa action (de terceiros, não é nossa) tenta instalar por dentro
+um pacote chamado `tools` do SDK do Android — um pacote **legado**, que o
+Google removeu de vez do repositório (foi substituído há anos pelo
+`cmdline-tools`, mas essa action nunca foi atualizada pra parar de pedir
+o pacote antigo). Não tem como consertar por dentro dela; ela está
+efetivamente abandonada.
+
+- **Corrigido:** removida a dependência dessa action. As máquinas do
+  GitHub Actions (`ubuntu-latest`) já vêm com um Android SDK completo
+  pré-instalado — só precisávamos apontar as variáveis de ambiente certas
+  pra ele (`ANDROID_HOME`/`ANDROID_SDK_ROOT`) e aceitar as licenças, sem
+  precisar de nenhuma action externa pra isso.
+
+**Arquivos alterados:** `edenmc-mobile/.github/workflows/build-apk.yml`
+
+⚠️ Não dá pra rodar o GitHub Actions daqui pra confirmar de verdade. O
+caminho usado (`/usr/local/lib/android/sdk`) é o local documentado onde o
+SDK já vem instalado nesses runners, mas coloquei um aviso no log (em vez
+de travar o build ali) caso esse caminho não bata — se isso acontecer, o
+build vai falhar um pouco mais na frente (no `cap sync` ou na compilação
+em si) com uma mensagem mais clara do que está faltando, e a gente ajusta
+a partir daí.
+
+---
